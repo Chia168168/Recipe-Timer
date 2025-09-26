@@ -130,3 +130,30 @@ scheduler.start()
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False) # 在本地測試時，關閉 reloader 避免 scheduler 跑兩次
+@app.route('/validate_subscription', methods=['POST'])
+def validate_subscription():
+    """验证订阅格式是否正确"""
+    try:
+        data = request.json
+        subscription = data.get('subscription')
+        
+        if not subscription:
+            return jsonify({'valid': False, 'error': 'No subscription provided'}), 400
+        
+        # 检查必要字段
+        required_fields = ['endpoint', 'keys']
+        for field in required_fields:
+            if field not in subscription:
+                return jsonify({'valid': False, 'error': f'Missing field: {field}'}), 400
+        
+        # 检查 keys 对象
+        keys_required = ['p256dh', 'auth']
+        for key in keys_required:
+            if key not in subscription['keys']:
+                return jsonify({'valid': False, 'error': f'Missing key: {key}'}), 400
+        
+        print(f"订阅验证成功: {subscription['endpoint'][:50]}...")
+        return jsonify({'valid': True, 'message': 'Subscription is valid'}), 200
+        
+    except Exception as e:
+        return jsonify({'valid': False, 'error': str(e)}), 400    
