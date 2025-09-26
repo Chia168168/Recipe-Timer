@@ -318,13 +318,44 @@ function addDebugInfo() {
         <button onclick="checkHealth()" class="btn btn-sm btn-primary">服务器状态</button>
         <button onclick="checkTables()" class="btn btn-sm btn-info">检查表结构</button>
         <button onclick="testPush()" class="btn btn-sm btn-success">测试推送</button>
-        <button onclick="clearAllData()" class="btn btn-sm btn-warning">清除数据</button>
+        <button onclick="resetDatabase()" class="btn btn-sm btn-danger">重置数据库</button>
+        <button onclick="clearAllData()" class="btn btn-sm btn-warning">清除本地数据</button>
         <div style="margin-top:10px; font-size:12px; color:#666;">
-            当前问题: 订阅时服务器500错误
+            当前问题: 数据库表结构不匹配
         </div>
     `;
     document.querySelector('.container').appendChild(debugDiv);
 }
+// 数据库重置功能
+window.resetDatabase = async function() {
+    if (!confirm('确定要重置数据库吗？这将删除所有数据！')) {
+        return;
+    }
+    
+    try {
+        const resetKey = prompt('请输入重置密钥:');
+        if (!resetKey) return;
+        
+        const response = await fetch('/admin/reset_db', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Reset-Key': resetKey
+            }
+        });
+        
+        if (response.ok) {
+            showNotification('数据库重置成功！', 'success');
+            setTimeout(() => location.reload(), 2000);
+        } else {
+            const error = await response.text();
+            throw new Error(error);
+        }
+    } catch (error) {
+        showNotification('重置失败: ' + error.message, 'error');
+    }
+};
+
 // 调试函数
 window.testPush = async function() {
     try {
