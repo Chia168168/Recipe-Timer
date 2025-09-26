@@ -275,8 +275,56 @@ window.addEventListener('load', initializeApp);
 
 // 全局函数
 window.handleTimerClick = handleTimerClick;
-window.checkHealth = checkHealth;
-
+// 更新健康检查函数
+window.checkHealth = async function() {
+    try {
+        const response = await fetch('/health');
+        if (response.ok) {
+            const health = await response.json();
+            showNotification(`服务器状态: ${health.status}`, 'success');
+            console.log('服务器健康状态:', health);
+        } else {
+            throw new Error('健康检查失败');
+        }
+    } catch (error) {
+        showNotification('服务器检查失败: ' + error.message, 'error');
+    }
+};
+// 添加表结构检查功能
+window.checkTables = async function() {
+    try {
+        const response = await fetch('/debug/tables');
+        if (response.ok) {
+            const tables = await response.json();
+            console.log('数据库表结构:', tables);
+            showNotification('表结构检查完成，查看控制台', 'success');
+        } else {
+            throw new Error('表结构检查失败');
+        }
+    } catch (error) {
+        console.error('表结构检查错误:', error);
+        showNotification('检查失败: ' + error.message, 'error');
+    }
+};
+// 更新调试面板
+function addDebugInfo() {
+    const debugDiv = document.createElement('div');
+    debugDiv.style.marginTop = '20px';
+    debugDiv.style.padding = '10px';
+    debugDiv.style.background = '#f5f5f5';
+    debugDiv.style.borderRadius = '5px';
+    debugDiv.innerHTML = `
+        <h4>调试功能</h4>
+        <button onclick="checkHealth()" class="btn btn-sm btn-primary">服务器状态</button>
+        <button onclick="checkTables()" class="btn btn-sm btn-info">检查表结构</button>
+        <button onclick="testPush()" class="btn btn-sm btn-success">测试推送</button>
+        <button onclick="clearAllData()" class="btn btn-sm btn-warning">清除数据</button>
+        <div style="margin-top:10px; font-size:12px; color:#666;">
+            当前问题: 订阅时服务器500错误
+        </div>
+    `;
+    document.querySelector('.container').appendChild(debugDiv);
+}
 // 调试函数
 window.testPush = async function() {
     try {
