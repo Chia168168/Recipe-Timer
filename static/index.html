@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TENG 食譜管理系統 (雲端計時版)</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    /* 這裡貼上您原本所有的 CSS 樣式 */
+    :root{--primary:#4a6fa5; --primary-dark:#2a4b7a; --primary-light:#6d8fc7; --success:#28a745; --danger:#dc3545; --info:#17a2b8; --light:#f8f9fa; --dark:#343a40; --gray:#6c757d; --card-shadow:0 8px 24px rgba(0,0,0,0.08); --radius:12px; --font:"微軟正黑體", "Helvetica Neue", Arial, sans-serif;}
+    *{box-sizing:border-box}
+    body{font-family:var(--font); background:linear-gradient(135deg,#f5f7fa 0,#e8eef8 100%); color:var(--dark); margin:0; padding:24px;}
+    .container{max-width:1200px;margin:0 auto;}.header{padding:18px;border-radius:var(--radius); background:linear-gradient(135deg,var(--primary),var(--primary-dark)); color:white; box-shadow:var(--card-shadow); margin-bottom:18px;}.header h1{margin:0; font-size:1.5rem; display:flex; align-items:center; gap:10px}
+    .top-controls{position:absolute; right:20px; top:20px; display:flex; gap:8px; align-items:center;}.tab-container{display:flex; gap:0; border-radius:var(--radius); overflow:hidden; margin-bottom:14px; box-shadow:var(--card-shadow);}.tab{flex:1;padding:14px;text-align:center;background:white;cursor:pointer;font-weight:700;color:var(--gray)}.tab.active{border-bottom:4px solid var(--primary); color:var(--primary)}.card{background:white;padding:16px;border-radius:12px;box-shadow:var(--card-shadow); margin-bottom:14px;}
+    input,select,textarea{width:100%;padding:10px;border-radius:8px;border:1px solid #e6eef8;font-size:0.95rem}.row{display:flex;gap:12px}.col{flex:1}.checkbox-cell { width: 50px; text-align: center;}
+	input[type="checkbox"] { accent-color: red; }.btn{display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:8px; border:none; cursor:pointer; color:white; font-weight:700; transition: background-color 0.2s ease, color 0.2s ease;}.btn-sm{padding:6px 8px; font-size:0.9rem}.btn-primary{background:var(--primary)} .btn-success{background:var(--success)} .btn-danger{background:var(--danger)} .btn-info{background:var(--info)} .btn-ghost{background:transparent;color:var(--gray);border:1px solid #eee}
+    .ingredient-grid{display:grid; grid-template-columns: 1fr 1.6fr 1fr 1fr 1fr auto; gap:8px; align-items:center; padding:8px; background:#fbfdff;border-radius:8px; margin-bottom:8px; border:1px solid #f0f6fb;}.ingredient-group-header{font-weight:800;color:var(--primary-dark); padding:8px 4px; margin-top:8px; display:flex; justify-content:space-between; align-items:center}.notification-container{position:fixed; right:18px; top:18px; z-index:9999; display:flex; flex-direction:column; gap:8px;}.notification{padding:10px 14px;border-radius:8px;color:white;box-shadow:0 4px 12px rgba(0,0,0,0.12);display:flex;gap:10px;align-items:center}
+    .notification-success{background:var(--success)} .notification-error{background:var(--danger)} .notification-info{background:var(--info)} .notification-warning{background:orange;color:#111}footer{color:var(--gray); text-align:center; margin-top:12px}@media(max-width:880px){ .ingredient-grid{grid-template-columns:1fr; } .top-controls{position:static;margin-bottom:12px} .row{flex-direction:column} }
+    #searchBar {flex: 1;min-width: 200px;padding: 10px;font-size: 1rem;border: 1px solid #ccc;border-radius: 8px;color: var(--dark);background: white;}#searchBar::placeholder {color: var(--gray);opacity: 0.7;}
+  </style>
+</head>
+<body>
+  <div class="notification-container" id="notificationContainer"></div>
+  
+  <div class="top-controls">
+    <button class="btn btn-success btn-sm" id="enableNotificationsBtn" style="display: none;"><i class="fas fa-bell"></i> 啟用推播通知</button>
+  </div>
+
+  <div class="container">
+    <div class="header">
+      <h1><i class="fas fa-cloud"></i> TENG 食譜管理系統 (雲端計時版)</h1>
+      <p style="margin-top:8px;opacity:0.95">由後端伺服器提供可靠的背景計時與推播通知。</p>
+    </div>
+    <div id="recipes-list" style="margin-top:12px">
+        <div style="text-align:center; padding:30px; color:var(--gray)"><i class="fas fa-spinner fa-spin" style="font-size:36px;"></i><h3>載入中...</h3></div>
+    </div>
+  </div>
+
+  <script src="/main.js"></script>
+</body>
+</html>
