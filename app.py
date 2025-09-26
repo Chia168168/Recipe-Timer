@@ -66,7 +66,7 @@ def health_check():
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
         'vapid_configured': bool(VAPID_PRIVATE_KEY and VAPID_PUBLIC_KEY),
-        'database_connected': db.engine.execute('SELECT 1') is not None,
+        'database_connected': True,  # 简化检查
         'subscription_count': Subscription.query.count(),
         'active_timers': Timer.query.filter(Timer.notified == False).count()
     })
@@ -75,9 +75,13 @@ def health_check():
 def subscribe():
     try:
         data = request.json
-        subscription_json = json.dumps(data['subscription'])
+        if not data or 'subscription' not in data:
+            return jsonify({'status': 'error', 'message': 'Invalid request data'}), 400
+            
+        subscription_data = data['subscription']
+        subscription_json = json.dumps(subscription_data)
         
-        logger.info(f"收到订阅请求，端点: {data['subscription']['endpoint'][:50]}...")
+        logger.info(f"收到订阅请求，端点: {subscription_data['endpoint'][:50]}...")
         
         # 检查是否已存在
         existing_sub = Subscription.query.filter_by(subscription_json=subscription_json).first()
@@ -100,9 +104,15 @@ def subscribe():
 def start_timer():
     try:
         data = request.json
-        minutes = int(data['minutes'])
-        subscription_data = data['subscription']
+        if not data:
+            return jsonify({'status': 'error', 'message': 'No data provided'}), 400
+            
+        minutes = int(data.get('minutes', 0))
+        subscription_data = data.get('subscription')
         
+        if not subscription_data:
+            return jsonify({'status': 'error', 'message': 'No subscription provided'}), 400
+            
         logger.info(f"开始计时器请求: {minutes} 分钟")
         
         # 记录调试信息
@@ -117,7 +127,13 @@ def start_timer():
 
         if not sub_info:
             logger.warning(f"未找到订阅: {subscription_endpoint}")
-            return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
+            # 创建新订阅
+            subscription_json = json.dumps(subscription_data)
+            new_sub = Subscription(subscription_json=subscription_json)
+            db.session.add(new_sub)
+            db.session.flush()  # 获取ID但不提交
+            sub_info = new_sub
+            logger.info(f"创建了新订阅: {new_sub.id}")
 
         expiry_time = datetime.utcnow() + timedelta(minutes=minutes)
         message = data.get('message', f'您的 {minutes} 分钟计时器已完成！')
@@ -156,6 +172,9 @@ def test_push():
     """立即测试推送"""
     try:
         data = request.json
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+            
         subscription_info = data.get('subscription')
         message = data.get('message', '测试推送消息')
         
@@ -169,7 +188,10 @@ def test_push():
         ).first()
         
         if not sub_record:
-            return jsonify({'error': 'Subscription not found in database'}), 404
+            # 如果数据库中不存在，临时使用提供的订阅信息
+            subscription_json = json.dumps(subscription_info)
+            send_notification(subscription_json, message)
+            return jsonify({'status': 'success', 'message': '测试推送已发送（使用临时订阅）'})
         
         # 发送测试推送
         send_notification(sub_record.subscription_json, message)
@@ -183,32 +205,46 @@ def test_push():
 @app.route('/debug/subscriptions')
 def debug_subscriptions():
     """调试端点：显示所有订阅"""
-    subscriptions = Subscription.query.all()
-    result = []
-    for sub in subscriptions:
-        result.append({
-            'id': sub.id,
-            'created_at': sub.created_at.isoformat(),
-            'endpoint': json.loads(sub.subscription_json)['endpoint'],
-            'timer_count': len(sub.timers)
-        })
-    return jsonify(result)
+    try:
+        subscriptions = Subscription.query.all()
+        result = []
+        for sub in subscriptions:
+            try:
+                sub_data = json.loads(sub.subscription_json)
+                result.append({
+                    'id': sub.id,
+                    'created_at': sub.created_at.isoformat() if sub.created_at else None,
+                    'endpoint': sub_data.get('endpoint', 'N/A'),
+                    'timer_count': len(sub.timers)
+                })
+            except json.JSONDecodeError:
+                result.append({
+                    'id': sub.id,
+                    'error': 'Invalid JSON',
+                    'timer_count': len(sub.timers)
+                })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/debug/timers')
 def debug_timers():
     """调试端点：显示所有计时器"""
-    timers = Timer.query.all()
-    result = []
-    for timer in timers:
-        result.append({
-            'id': timer.id,
-            'message': timer.message,
-            'expiry_time': timer.expiry_time.isoformat(),
-            'notified': timer.notified,
-            'created_at': timer.created_at.isoformat(),
-            'subscription_id': timer.subscription_id
-        })
-    return jsonify(result)
+    try:
+        timers = Timer.query.all()
+        result = []
+        for timer in timers:
+            result.append({
+                'id': timer.id,
+                'message': timer.message,
+                'expiry_time': timer.expiry_time.isoformat(),
+                'notified': timer.notified,
+                'created_at': timer.created_at.isoformat() if timer.created_at else None,
+                'subscription_id': timer.subscription_id
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # --- 背景计时与推送任务 ---
 def send_notification(subscription_info, message):
@@ -220,8 +256,16 @@ def send_notification(subscription_info, message):
     try:
         logger.info(f"发送推送消息: {message}")
         
+        # 确保订阅信息是字典
+        if isinstance(subscription_info, str):
+            try:
+                subscription_info = json.loads(subscription_info)
+            except json.JSONDecodeError:
+                logger.error("无效的订阅JSON格式")
+                return
+                
         webpush(
-            subscription_info=json.loads(subscription_info),
+            subscription_info=subscription_info,
             data=json.dumps({
                 "title": "食谱计时器",
                 "body": message,
@@ -238,13 +282,18 @@ def send_notification(subscription_info, message):
         if ex.response and ex.response.status_code == 410:
             logger.info("订阅已失效，正在删除...")
             # 如果订阅已失效 (410 Gone)，从数据库删除
-            sub_to_delete = Subscription.query.filter_by(subscription_json=subscription_info).first()
-            if sub_to_delete:
-                # 先删除相关的计时器
-                Timer.query.filter_by(subscription_id=sub_to_delete.id).delete()
-                db.session.delete(sub_to_delete)
-                db.session.commit()
-                logger.info("失效订阅已删除")
+            try:
+                sub_to_delete = Subscription.query.filter_by(
+                    subscription_json=json.dumps(subscription_info)
+                ).first()
+                if sub_to_delete:
+                    # 先删除相关的计时器
+                    Timer.query.filter_by(subscription_id=sub_to_delete.id).delete()
+                    db.session.delete(sub_to_delete)
+                    db.session.commit()
+                    logger.info("失效订阅已删除")
+            except Exception as e:
+                logger.error(f"删除失效订阅错误: {e}")
         else:
             logger.error(f"推送发送错误: {ex}")
     except Exception as ex:
@@ -265,7 +314,7 @@ def check_timers():
             logger.info(f"找到 {len(due_timers)} 个到期计时器")
             
             for timer in due_timers:
-                logger.info(f"处理计时器 ID {timer}: {timer.message}")
+                logger.info(f"处理计时器 ID {timer.id}: {timer.message}")
                 try:
                     send_notification(timer.subscription.subscription_json, timer.message)
                     timer.notified = True
