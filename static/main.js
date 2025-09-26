@@ -352,7 +352,7 @@ async function checkSubscriptionStatus() {
     }
 }
 
-// ==================== 改进的计时器功能 ====================
+// ==================== 计时器功能 ====================
 async function handleTimerClick(minutes, recipeName) {
     if (localStorage.getItem('pushSubscribed') !== 'true') {
         showNotification('请先启用推送通知', 'warning');
@@ -360,10 +360,6 @@ async function handleTimerClick(minutes, recipeName) {
     }
 
     try {
-        console.log('=== 开始设置计时器 ===');
-        console.log('分钟:', minutes);
-        console.log('食谱:', recipeName);
-        
         const subscription = await swRegistration.pushManager.getSubscription();
         if (!subscription) {
             showNotification('找不到订阅，请重新启用通知', 'error');
@@ -372,41 +368,20 @@ async function handleTimerClick(minutes, recipeName) {
             return;
         }
 
-        console.log('订阅信息:', {
-            endpoint: subscription.endpoint,
-            keys: subscription.keys
-        });
-
-        const timerData = {
-            minutes: minutes,
-            message: `食谱「${recipeName}」的 ${minutes} 分钟计时已完成！`,
-            subscription: subscription
-        };
-
-        console.log('发送到服务器的数据:', timerData);
-
         const response = await fetch('/start_timer', {
             method: 'POST',
-            body: JSON.stringify(timerData),
-            headers: { 
-                'Content-Type': 'application/json',
-                'X-Debug': 'true'  // 添加调试头
-            }
+            body: JSON.stringify({
+                minutes: minutes,
+                message: `食谱「${recipeName}」的 ${minutes} 分钟计时已完成！`,
+                subscription: subscription
+            }),
+            headers: { 'Content-Type': 'application/json' }
         });
 
-        console.log('服务器响应状态:', response.status);
-        
         if (response.ok) {
-            const result = await response.json();
-            console.log('服务器响应内容:', result);
             showNotification(`已设定 ${minutes} 分钟计时器！`, 'success');
-            
-            // 添加测试推送按钮
-            addTestPushButton(subscription, minutes, recipeName);
         } else {
-            const errorText = await response.text();
-            console.error('服务器错误响应:', errorText);
-            throw new Error(`HTTP错误: ${response.status} - ${errorText}`);
+            throw new Error(`HTTP错误: ${response.status}`);
         }
     } catch(err) {
         console.error('设定计时器失败:', err);
@@ -553,65 +528,7 @@ window.clearAllData = async function() {
     }
 }
 
-// 添加测试推送按钮
-function addTestPushButton(subscription, minutes, recipeName) {
-    const testButton = document.createElement('button');
-    testButton.className = 'btn btn-sm btn-warning';
-    testButton.innerHTML = '<i class="fas fa-bell"></i> 立即测试推送';
-    testButton.onclick = () => testPushImmediately(subscription, minutes, recipeName);
-    
-    const container = document.querySelector('.container');
-    const existingTest = document.getElementById('test-push-button');
-    if (existingTest) existingTest.remove();
-    
-    testButton.id = 'test-push-button';
-    testButton.style.marginTop = '10px';
-    container.appendChild(testButton);
-}
-
-// 立即测试推送
-async function testPushImmediately(subscription, minutes, recipeName) {
-    try {
-        console.log('=== 立即测试推送 ===');
-        
-        const response = await fetch('/test_push', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                subscription: subscription,
-                message: `测试推送：${recipeName} 的 ${minutes} 分钟计时器`
-            })
-        });
-        
-        if (response.ok) {
-            showNotification('测试推送已发送！', 'success');
-        } else {
-            throw new Error('测试推送失败');
-        }
-    } catch (error) {
-        console.error('测试推送失败:', error);
-        showNotification('测试推送失败: ' + error.message, 'error');
-    }
-}
-
-// ==================== 添加服务器状态检查 ====================
-async function checkServerStatus() {
-    try {
-        const response = await fetch('/health');
-        if (response.ok) {
-            const status = await response.json();
-            console.log('服务器状态:', status);
-            return status;
-        } else {
-            throw new Error('服务器健康检查失败');
-        }
-    } catch (error) {
-        console.error('服务器状态检查失败:', error);
-        return null;
-    }
-}
-
-// 在初始化时检查服务器状态
+// ==================== 主初始化函数 ====================
 async function initializeApp() {
     try {
         // 启动扩展冲突检测
@@ -619,15 +536,6 @@ async function initializeApp() {
         
         // 先渲染食谱，确保基本功能可用
         renderRecipes();
-        
-        // 检查服务器状态
-        const serverStatus = await checkServerStatus();
-        if (serverStatus) {
-            console.log('服务器VAPID配置:', serverStatus.vapid_configured);
-            if (!serverStatus.vapid_configured) {
-                showNotification('服务器推送配置不完整，请联系管理员', 'warning');
-            }
-        }
         
         if (!checkBrowserSupport()) {
             console.log('浏览器不支持必要功能，仅显示基本界面');
