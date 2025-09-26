@@ -1,338 +1,66 @@
+// ******** VAPID 公钥 ********
 const VAPID_PUBLIC_KEY = 'BE0_aRw-529C4ZGHk90uZsKzAOexmMhAd24OYd182cE3rYMnFWOq__ODXZfVVzMeVPbpSregGuaLH3yDZqtbx-8';
+// *********************
 
 let swRegistration = null;
 
-// 改进的订阅函数 - 分步骤处理
-async function subscribeUser() {
-    const enableBtn = document.getElementById('enableNotificationsBtn');
-    
+// 基础函数定义
+function urlBase64ToUint8Array(base64String) {
     try {
-        enableBtn.disabled = true;
-        enableBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 订阅中...';
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
         
-        console.log('=== 开始分步推送订阅 ===');
-        
-        // 步骤1: 确保 Service Worker 完全就绪
-        if (!swRegistration || !swRegistration.active) {
-            throw new Error('Service Worker 未就绪');
+        for (let i = 0; i < rawData.length; ++i) {
+            outputArray[i] = rawData.charCodeAt(i);
         }
         
-        // 步骤2: 准备 VAPID 密钥
-        const applicationServerKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
-        console.log('VAPID 密钥准备完成');
-        
-        // 步骤3: 分步订阅过程
-        await performSubscription(applicationServerKey);
-        
-        // 成功
-        enableBtn.style.display = 'none';
-        showNotification('推送通知启用成功！', 'success');
-        
+        console.log('转换后的密钥长度:', outputArray.length);
+        return outputArray;
     } catch (error) {
-        handleSubscriptionError(error, enableBtn);
+        console.error('密钥转换错误:', error);
+        throw new Error('VAPID 公钥格式无效');
     }
 }
 
-// 分步执行订阅
-async function performSubscription(applicationServerKey) {
-    console.log('步骤1: 检查现有订阅');
-    let existingSubscription = await swRegistration.pushManager.getSubscription();
-    
-    if (existingSubscription) {
-        console.log('发现现有订阅，取消中...');
-        const success = await existingSubscription.unsubscribe();
-        console.log('取消结果:', success);
-        
-        // 验证取消
-        existingSubscription = await swRegistration.pushManager.getSubscription();
-        if (existingSubscription) {
-            throw new Error('无法取消现有订阅');
-        }
-    }
-    
-    console.log('步骤2: 创建新订阅');
-    
-    // 使用更保守的订阅方法
-    const subscription = await createSubscriptionWithFallback(applicationServerKey);
-    
-    if (!subscription || !subscription.endpoint) {
-        throw new Error('订阅创建失败：无效的订阅对象');
-    }
-    
-    console.log('订阅创建成功，端点:', subscription.endpoint.substring(0, 50) + '...');
-    
-    // 步骤3: 验证订阅
-    const isValid = await validateSubscription(subscription);
-    if (!isValid) {
-        throw new Error('订阅验证失败');
-    }
-    
-    // 步骤4: 保存到服务器
-    await saveSubscriptionToServer(subscription);
-    
-    // 步骤5: 本地存储
-    localStorage.setItem('pushSubscribed', 'true');
-    localStorage.setItem('subscription', JSON.stringify(subscription));
-    
-    console.log('=== 订阅流程完成 ===');
+function showNotification(message, type = 'info') {
+    const container = document.getElementById('notificationContainer');
+    const el = document.createElement('div');
+    el.className = `notification notification-${type}`;
+    let icon = 'fa-info-circle';
+    if (type === 'success') icon = 'fa-check-circle';
+    if (type === 'error') icon = 'fa-exclamation-circle';
+    if (type === 'warning') icon = 'fa-exclamation-triangle';
+    el.innerHTML = `<i class="fas ${icon}"></i><div>${message}</div>`;
+    container.appendChild(el);
+    setTimeout(() => { if (el.parentNode) el.remove(); }, 5000);
 }
 
-// 带降级的订阅创建
-async function createSubscriptionWithFallback(applicationServerKey) {
-    const methods = [
-        // 方法1: 标准 VAPID 订阅
-        async () => {
-            console.log('尝试标准 VAPID 订阅...');
-            return await swRegistration.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: applicationServerKey
-            });
-        },
-        
-        // 方法2: 不带 VAPID 的订阅（某些浏览器支持）
-        async () => {
-            console.log('尝试无 VAPID 订阅...');
-            return await swRegistration.pushManager.subscribe({
-                userVisibleOnly: true
-            });
-        },
-        
-        // 方法3: 使用不同的编码格式
-        async () => {
-            console.log('尝试备用编码格式...');
-            // 某些浏览器可能需要特定的编码格式
-            const subscriptionOptions = {
-                userVisibleOnly: true,
-                applicationServerKey: applicationServerKey
-            };
-            
-            // 尝试强制使用 aesgcm 编码（如果支持）
-            if (PushManager.supportedContentEncodings && 
-                PushManager.supportedContentEncodings.includes('aesgcm')) {
-                subscriptionOptions.applicationServerKey = applicationServerKey;
-            }
-            
-            return await swRegistration.pushManager.subscribe(subscriptionOptions);
-        }
-    ];
-    
-    for (let i = 0; i < methods.length; i++) {
-        try {
-            const subscription = await methods[i]();
-            if (subscription) {
-                console.log(`方法 ${i + 1} 成功`);
-                return subscription;
-            }
-        } catch (error) {
-            console.log(`方法 ${i + 1} 失败:`, error.message);
-            // 继续尝试下一种方法
-        }
-    }
-    
-    throw new Error('所有订阅方法都失败了');
-}
-
-// 验证订阅
-async function validateSubscription(subscription) {
-    try {
-        // 基本验证
-        if (!subscription.endpoint) {
-            return false;
-        }
-        
-        // 检查订阅是否包含必要的密钥
-        const keys = subscription.toJSON ? subscription.toJSON().keys : null;
-        if (!keys || !keys.p256dh || !keys.auth) {
-            console.warn('订阅缺少必要的加密密钥');
-        }
-        
-        // 发送验证请求到服务器
-        const response = await fetch('/validate_subscription', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ subscription: subscription })
-        });
-        
-        return response.ok;
-    } catch (error) {
-        console.error('订阅验证错误:', error);
+// 检查浏览器支持
+function checkBrowserSupport() {
+    if (!('serviceWorker' in navigator)) {
+        showNotification('您的浏览器不支持 Service Worker', 'error');
         return false;
     }
-}
-
-// 保存订阅到服务器
-async function saveSubscriptionToServer(subscription) {
-    const response = await fetch('/subscribe', {
-        method: 'POST',
-        headers: { 
-            'Content-Type': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest'
-        },
-        body: JSON.stringify({ subscription: subscription })
-    });
     
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`服务器保存失败: ${response.status} - ${errorText}`);
+    if (!('PushManager' in window)) {
+        showNotification('您的浏览器不支持推送通知', 'error');
+        return false;
     }
     
-    console.log('订阅已保存到服务器');
-}
-
-// 改进的错误处理
-function handleSubscriptionError(error, enableBtn) {
-    console.error('订阅错误详情:', error);
-    
-    let errorMessage = '订阅失败';
-    let errorType = 'error';
-    
-    if (error.name === 'AbortError' || error.message.includes('push service error')) {
-        errorMessage = `
-            推送服务暂时不可用。这可能是因为：
-            
-            1. 浏览器推送服务维护中
-            2. 网络策略限制（公司/学校网络）
-            3. 浏览器版本过旧
-            
-            建议：
-            • 尝试使用最新版 Chrome/Firefox
-            • 检查网络设置
-            • 稍后重试
-        `;
-        errorType = 'warning';
-    } else if (error.message.includes('VAPID') || error.message.includes('密钥')) {
-        errorMessage = 'VAPID 配置问题，请联系管理员';
-    } else {
-        errorMessage = error.message;
+    if (!('Notification' in window)) {
+        showNotification('您的浏览器不支持通知功能', 'error');
+        return false;
     }
     
-    showNotification(errorMessage, errorType);
-    
-    // 重置按钮
-    enableBtn.disabled = false;
-    enableBtn.innerHTML = '<i class="fas fa-bell"></i> 启用推送通知';
-    
-    // 显示详细解决方案
-    showDetailedSolutions(error);
+    return true;
 }
 
-// 显示详细解决方案
-function showDetailedSolutions(error) {
-    const solutions = getDetailedSolutions(error);
-    
-    const solutionDiv = document.createElement('div');
-    solutionDiv.id = 'subscription-solutions';
-    solutionDiv.style.marginTop = '20px';
-    solutionDiv.style.padding = '15px';
-    solutionDiv.style.background = '#f8f9fa';
-    solutionDiv.style.border = '1px solid #dee2e6';
-    solutionDiv.style.borderRadius = '5px';
-    
-    solutionDiv.innerHTML = `
-        <h4>🔧 解决方案</h4>
-        <div style="white-space: pre-line;">${solutions.advice}</div>
-        <div style="margin-top: 10px;">
-            ${solutions.actions.map(action => 
-                `<button onclick="${action.onclick}" class="btn btn-sm ${action.class}">${action.text}</button>`
-            ).join(' ')}
-        </div>
-    `;
-    
-    // 移除现有的解决方案
-    const existing = document.getElementById('subscription-solutions');
-    if (existing) existing.remove();
-    
-    document.querySelector('.container').appendChild(solutionDiv);
-}
-
-function getDetailedSolutions(error) {
-    const userAgent = navigator.userAgent.toLowerCase();
-    const isChrome = userAgent.includes('chrome');
-    const isFirefox = userAgent.includes('firefox');
-    
-    if (error.name === 'AbortError') {
-        return {
-            advice: `推送服务错误 (AbortError)。常见原因：
-• 浏览器推送服务暂时不可用
-• 网络策略阻止推送服务
-• 浏览器设置限制
-
-立即尝试：
-1. 重启浏览器
-2. 检查浏览器更新
-3. 尝试不同网络`,
-            actions: [
-                { text: '🔄 重启浏览器', onclick: 'location.reload()', class: 'btn-warning' },
-                { text: '🧹 清除数据重试', onclick: 'clearAllData()', class: 'btn-info' },
-                { text: '📋 复制错误信息', onclick: 'copyErrorToClipboard()', class: 'btn-secondary' }
-            ]
-        };
-    }
-    
-    return {
-        advice: '请尝试以下解决方案',
-        actions: [
-            { text: '🔄 刷新页面', onclick: 'location.reload()', class: 'btn-primary' },
-            { text: '🧪 测试基础功能', onclick: 'runComprehensiveTest()', class: 'btn-success' }
-        ]
-    };
-}
-
-// 综合测试函数
-window.runComprehensiveTest = async function() {
-    console.log('=== 开始综合测试 ===');
-    
-    try {
-        // 测试1: Service Worker
-        console.log('1. 测试 Service Worker...');
-        if (!swRegistration) {
-            throw new Error('Service Worker 未注册');
-        }
-        
-        // 测试2: 推送权限
-        console.log('2. 测试推送权限...');
-        const permission = await Notification.requestPermission();
-        if (permission !== 'granted') {
-            throw new Error('通知权限未授予');
-        }
-        
-        // 测试3: 基础通知
-        console.log('3. 测试基础通知...');
-        if (!('Notification' in window)) {
-            throw new Error('浏览器不支持通知');
-        }
-        
-        // 测试4: 服务器连接
-        console.log('4. 测试服务器连接...');
-        const healthResponse = await fetch('/health');
-        if (!healthResponse.ok) {
-            throw new Error('服务器健康检查失败');
-        }
-        
-        showNotification('所有基础测试通过！推送服务可能是临时问题。', 'success');
-        
-    } catch (error) {
-        console.error('综合测试失败:', error);
-        showNotification('测试失败: ' + error.message, 'error');
-    }
-}
-
-window.copyErrorToClipboard = function() {
-    const errorInfo = {
-        userAgent: navigator.userAgent,
-        timestamp: new Date().toISOString(),
-        url: window.location.href,
-        error: 'AbortError: Registration failed - push service error'
-    };
-    
-    navigator.clipboard.writeText(JSON.stringify(errorInfo, null, 2));
-    showNotification('错误信息已复制到剪贴板', 'success');
-}
-
-// 更新 Service Worker 注册逻辑
+// 注册 Service Worker
 async function registerServiceWorker() {
     if (!checkBrowserSupport()) {
-        return;
+        return null;
     }
 
     try {
@@ -355,13 +83,26 @@ async function registerServiceWorker() {
         // 等待激活
         return new Promise((resolve, reject) => {
             if (swRegistration.active) {
+                console.log('Service Worker 已激活');
                 resolve(swRegistration);
                 return;
             }
             
+            const checkActivation = () => {
+                if (swRegistration.active) {
+                    console.log('Service Worker 已激活');
+                    resolve(swRegistration);
+                }
+            };
+            
+            // 立即检查一次
+            checkActivation();
+            
+            // 监听状态变化
             swRegistration.addEventListener('updatefound', () => {
                 const newWorker = swRegistration.installing;
                 newWorker.addEventListener('statechange', () => {
+                    console.log('Service Worker 状态变化:', newWorker.state);
                     if (newWorker.state === 'activated') {
                         resolve(swRegistration);
                     }
@@ -369,33 +110,351 @@ async function registerServiceWorker() {
             });
             
             // 超时处理
-            setTimeout(() => reject(new Error('Service Worker 激活超时')), 10000);
+            setTimeout(() => {
+                if (swRegistration.active) {
+                    resolve(swRegistration);
+                } else {
+                    reject(new Error('Service Worker 激活超时'));
+                }
+            }, 10000);
         });
         
     } catch (error) {
         console.error('Service Worker 注册失败:', error);
-        throw error;
+        showNotification('Service Worker 注册失败: ' + error.message, 'error');
+        return null;
     }
 }
 
-// 更新初始化流程
-async function initializeApp() {
+// 检查订阅状态
+async function checkSubscriptionStatus() {
     try {
-        await registerServiceWorker();
-        initializeUI();
-        renderRecipes();
+        const subscription = await swRegistration.pushManager.getSubscription();
+        const pushSubscribed = localStorage.getItem('pushSubscribed') === 'true';
+        
+        if (subscription && pushSubscribed) {
+            console.log('用户已订阅推送通知');
+            document.getElementById('enableNotificationsBtn').style.display = 'none';
+            return true;
+        } else {
+            console.log('用户未订阅或订阅状态不一致');
+            document.getElementById('enableNotificationsBtn').style.display = 'inline-flex';
+            return false;
+        }
     } catch (error) {
-        console.error('应用初始化失败:', error);
-        showNotification('应用初始化失败，请刷新页面重试', 'error');
+        console.error('检查订阅状态失败:', error);
+        document.getElementById('enableNotificationsBtn').style.display = 'inline-flex';
+        return false;
     }
 }
 
-// 更新入口点
-window.addEventListener('load', () => {
-    if (!checkBrowserSupport()) {
-        renderRecipes();
+// 订阅推送通知
+async function subscribeUser() {
+    const enableBtn = document.getElementById('enableNotificationsBtn');
+    
+    try {
+        enableBtn.disabled = true;
+        enableBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 订阅中...';
+        
+        console.log('=== 开始推送订阅流程 ===');
+        
+        // 1. 检查网络连接
+        if (!navigator.onLine) {
+            throw new Error('网络连接不可用，请检查网络连接');
+        }
+        
+        // 2. 检查通知权限
+        const permission = await Notification.requestPermission();
+        console.log('通知权限状态:', permission);
+        
+        if (permission !== 'granted') {
+            throw new Error('通知权限未被授予');
+        }
+        
+        // 3. 验证 VAPID 密钥
+        const applicationServerKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+        console.log('VAPID 密钥验证成功，长度:', applicationServerKey.length);
+        
+        // 4. 检查并清理现有订阅
+        let existingSubscription = await swRegistration.pushManager.getSubscription();
+        if (existingSubscription) {
+            console.log('发现现有订阅，正在取消...');
+            await existingSubscription.unsubscribe();
+            console.log('现有订阅已取消');
+        }
+        
+        // 5. 创建新订阅
+        console.log('正在创建新订阅...');
+        const subscription = await swRegistration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: applicationServerKey
+        });
+        
+        console.log('订阅创建成功');
+        
+        // 6. 验证订阅对象
+        if (!subscription.endpoint) {
+            throw new Error('订阅对象无效：缺少 endpoint');
+        }
+        
+        console.log('推送服务端点:', subscription.endpoint);
+        
+        // 7. 发送到服务器
+        console.log('正在发送订阅信息到服务器...');
+        const response = await fetch('/subscribe', {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({ subscription })
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('服务器响应错误:', response.status, errorText);
+            throw new Error(`服务器错误: ${response.status}`);
+        }
+        
+        // 8. 成功处理
+        localStorage.setItem('pushSubscribed', 'true');
+        localStorage.setItem('subscription', JSON.stringify(subscription));
+        enableBtn.style.display = 'none';
+        
+        showNotification('推送通知启用成功！', 'success');
+        console.log('=== 推送订阅流程完成 ===');
+        
+    } catch (error) {
+        console.error('订阅失败详情:', error);
+        
+        // 错误处理
+        let errorMessage = '订阅失败';
+        
+        if (error.name === 'AbortError' || error.message.includes('push service error')) {
+            errorMessage = '推送服务错误。可能的原因：\n' +
+                          '- 浏览器推送服务暂时不可用\n' +
+                          '- 防火墙或网络限制\n' +
+                          '- 请尝试使用 Chrome 或 Firefox\n' +
+                          '- 检查浏览器是否最新版本';
+        } else if (error.name === 'NotAllowedError') {
+            errorMessage = '通知权限被拒绝。请在浏览器设置中允许通知';
+        } else if (error.name === 'NotSupportedError') {
+            errorMessage = '您的浏览器不支持推送通知功能';
+        } else if (error.message.includes('网络') || error.message.includes('超时')) {
+            errorMessage = '网络连接问题：' + error.message;
+        } else {
+            errorMessage = error.message;
+        }
+        
+        showNotification(errorMessage, 'error');
+        
+        // 重置按钮状态
+        enableBtn.disabled = false;
+        enableBtn.innerHTML = '<i class="fas fa-bell"></i> 启用推送通知';
+    }
+}
+
+// 处理计时器按钮点击
+async function handleTimerClick(minutes, recipeName) {
+    if (localStorage.getItem('pushSubscribed') !== 'true') {
+        showNotification('请先启用推送通知', 'warning');
         return;
     }
+
+    try {
+        const subscription = await swRegistration.pushManager.getSubscription();
+        if (!subscription) {
+            showNotification('找不到订阅，请重新启用通知', 'error');
+            localStorage.setItem('pushSubscribed', 'false');
+            initializeUI();
+            return;
+        }
+
+        const response = await fetch('/start_timer', {
+            method: 'POST',
+            body: JSON.stringify({
+                minutes: minutes,
+                message: `食谱「${recipeName}」的 ${minutes} 分钟计时已完成！`,
+                subscription: subscription
+            }),
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        if (response.ok) {
+            showNotification(`已设定 ${minutes} 分钟计时器！`, 'success');
+        } else {
+            throw new Error(`HTTP错误: ${response.status}`);
+        }
+    } catch(err) {
+        console.error('设定计时器失败:', err);
+        showNotification('设定失败: ' + err.message, 'error');
+    }
+}
+
+// 渲染食谱
+function renderRecipes() {
+    const recipeList = [
+        { title: '基础面团发酵', steps: [{ text: '第一次发酵 60 分钟', time: 60 }, { text: '第二次发酵 30 分钟', time: 30 }] },
+        { title: '烤鸡', steps: [{ text: '腌渍 120 分钟', time: 120 }, { text: '烘烤 45 分钟', time: 45 }] },
+        { title: '测试用', steps: [{ text: '1 分钟快速测试', time: 1 }] }
+    ];
+
+    const container = document.getElementById('recipes-list');
+    container.innerHTML = '';
+
+    recipeList.forEach(recipe => {
+        let stepsHtml = '';
+        recipe.steps.forEach(step => {
+            stepsHtml += `
+                <div style="display:flex; justify-content:space-between; align-items:center; padding: 8px 0;">
+                    <span>${step.text}</span>
+                    <button class="btn btn-info btn-sm" onclick="handleTimerClick(${step.time}, '${recipe.title}')">
+                        <i class="fas fa-hourglass-start"></i> 启动 ${step.time} 分钟计时
+                    </button>
+                </div>
+            `;
+        });
+
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+            <strong style="color:var(--primary); font-size:1.5rem">${recipe.title}</strong>
+            <div style="margin-top:12px;">${stepsHtml}</div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+// 初始化界面
+function initializeUI() {
+    const enableBtn = document.getElementById('enableNotificationsBtn');
+    enableBtn.addEventListener('click', subscribeUser);
     
+    // 检查现有订阅状态
+    checkSubscriptionStatus();
+}
+
+// 清除所有数据
+window.clearAllData = async function() {
+    try {
+        // 取消现有订阅
+        const subscription = await swRegistration.pushManager.getSubscription();
+        if (subscription) {
+            await subscription.unsubscribe();
+        }
+        
+        // 清除本地存储
+        localStorage.removeItem('pushSubscribed');
+        localStorage.removeItem('subscription');
+        
+        // 清除 Service Worker
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (let registration of registrations) {
+            await registration.unregister();
+        }
+        
+        // 重新加载页面
+        location.reload();
+    } catch (error) {
+        console.error('清除数据失败:', error);
+        showNotification('清除失败: ' + error.message, 'error');
+    }
+}
+
+// 添加调试功能
+function addDebugInfo() {
+    const debugDiv = document.createElement('div');
+    debugDiv.style.marginTop = '20px';
+    debugDiv.style.padding = '10px';
+    debugDiv.style.background = '#f5f5f5';
+    debugDiv.style.borderRadius = '5px';
+    debugDiv.innerHTML = `
+        <h4>调试功能</h4>
+        <button onclick="testSubscription()" class="btn btn-sm btn-info">测试订阅状态</button>
+        <button onclick="clearAllData()" class="btn btn-sm btn-warning">清除所有数据</button>
+        <button onclick="runDiagnostics()" class="btn btn-sm btn-success">运行诊断</button>
+    `;
+    document.querySelector('.container').appendChild(debugDiv);
+}
+
+window.testSubscription = async function() {
+    try {
+        const subscription = await swRegistration.pushManager.getSubscription();
+        if (subscription) {
+            console.log('当前订阅:', subscription);
+            showNotification('订阅存在，查看控制台', 'success');
+        } else {
+            showNotification('无订阅', 'warning');
+        }
+    } catch (error) {
+        console.error('测试失败:', error);
+    }
+}
+
+window.runDiagnostics = async function() {
+    console.log('=== 运行诊断 ===');
+    
+    // 检查浏览器支持
+    console.log('Service Worker 支持:', 'serviceWorker' in navigator);
+    console.log('Push Manager 支持:', 'PushManager' in window);
+    console.log('Notification 支持:', 'Notification' in window);
+    
+    // 检查权限
+    const permission = await Notification.permission;
+    console.log('通知权限:', permission);
+    
+    // 检查网络
+    console.log('在线状态:', navigator.onLine);
+    
+    // 检查 Service Worker
+    if (swRegistration) {
+        console.log('Service Worker 状态:', swRegistration.active?.state);
+    }
+    
+    // 检查订阅
+    const subscription = await swRegistration.pushManager.getSubscription();
+    console.log('订阅状态:', subscription ? '已订阅' : '未订阅');
+    
+    showNotification('诊断完成，查看控制台', 'success');
+}
+
+// 主初始化函数
+async function initializeApp() {
+    try {
+        // 先渲染食谱，即使推送功能有问题也能使用基本功能
+        renderRecipes();
+        
+        // 检查浏览器支持
+        if (!checkBrowserSupport()) {
+            console.log('浏览器不支持必要功能，仅显示基本界面');
+            return;
+        }
+        
+        // 注册 Service Worker
+        swRegistration = await registerServiceWorker();
+        if (!swRegistration) {
+            console.log('Service Worker 注册失败，仅显示基本界面');
+            return;
+        }
+        
+        // 初始化界面
+        initializeUI();
+        
+        // 添加调试信息
+        addDebugInfo();
+        
+        console.log('应用初始化完成');
+        
+    } catch (error) {
+        console.error('应用初始化失败:', error);
+        showNotification('应用初始化失败: ' + error.message, 'error');
+    }
+}
+
+// 程序入口点
+window.addEventListener('load', () => {
     initializeApp();
 });
+
+// 确保 handleTimerClick 在全局可访问
+window.handleTimerClick = handleTimerClick;
