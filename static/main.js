@@ -1,6 +1,26 @@
 // ******** VAPID 公钥 ********
 const VAPID_PUBLIC_KEY = 'BE0_aRw-529C4ZGHk90uZsKzAOexmMhAd24OYd182cE3rYMnFWOq__ODXZfVVzMeVPbpSregGuaLH3yDZqtbx-8';
 // *********************
+// 在 main.js 开头添加数据库连接状态检查
+let dbConnectionStatus = 'unknown';
+
+// 添加数据库状态检查函数
+async function checkDatabaseStatus() {
+    try {
+        const response = await fetch('/health');
+        if (response.ok) {
+            const health = await response.json();
+            dbConnectionStatus = health.database_connected ? 'connected' : 'disconnected';
+            console.log('数据库状态:', dbConnectionStatus);
+            return health.database_connected;
+        }
+        return false;
+    } catch (error) {
+        dbConnectionStatus = 'error';
+        console.error('数据库状态检查失败:', error);
+        return false;
+    }
+}
 
 let swRegistration = null;
 
@@ -260,14 +280,22 @@ async function subscribeWithExtensionSafety(applicationServerKey) {
     }
 }
 
+// 更新订阅函数，添加数据库状态检查
 async function subscribeUser() {
     const enableBtn = document.getElementById('enableNotificationsBtn');
     
     try {
+        // 先检查数据库状态
+        const dbOK = await checkDatabaseStatus();
+        if (!dbOK) {
+            showNotification('数据库连接异常，请稍后重试', 'error');
+            return;
+        }
+        
         enableBtn.disabled = true;
         enableBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 订阅中...';
         
-        console.log('开始推送订阅（扩展安全模式）...');
+        console.log('开始推送订阅...');
         
         if (!navigator.onLine) {
             throw new Error('网络连接不可用');
@@ -306,7 +334,19 @@ async function subscribeUser() {
         });
         
         if (!response.ok) {
-            throw new Error(`服务器错误: ${response.status}`);
+            const errorText = await response.text();
+            let errorMessage = `服务器错误: ${response.status}`;
+            
+            try {
+                const errorData = JSON.parse(errorText);
+                if (errorData.message && errorData.message.includes('数据库')) {
+                    errorMessage = '数据库暂时不可用，请稍后重试';
+                }
+            } catch (e) {
+                // 忽略JSON解析错误
+            }
+            
+            throw new Error(errorMessage);
         }
         
         localStorage.setItem('pushSubscribed', 'true');
@@ -319,14 +359,10 @@ async function subscribeUser() {
         console.error('订阅失败:', error);
         
         let errorMessage = '订阅失败';
-        if (error.message.includes('Extension context')) {
-            errorMessage = '浏览器扩展冲突。请尝试：\n1. 禁用广告拦截器\n2. 使用无痕模式\n3. 检查扩展设置';
-        } else if (error.name === 'AbortError' || error.message.includes('push service error')) {
-            errorMessage = '推送服务错误。可能的原因：\n- 浏览器推送服务暂时不可用\n- 防火墙或网络限制\n- 请尝试使用 Chrome 或 Firefox';
-        } else if (error.name === 'NotAllowedError') {
-            errorMessage = '通知权限被拒绝。请在浏览器设置中允许通知';
-        } else if (error.name === 'NotSupportedError') {
-            errorMessage = '您的浏览器不支持推送通知功能';
+        if (error.message.includes('数据库')) {
+            errorMessage = '服务器暂时不可用，请稍后重试';
+        } else if (error.message.includes('Extension context')) {
+            errorMessage = '浏览器扩展冲突，请尝试禁用扩展';
         } else {
             errorMessage = error.message;
         }
@@ -337,7 +373,6 @@ async function subscribeUser() {
         enableBtn.innerHTML = '<i class="fas fa-bell"></i> 启用推送通知';
     }
 }
-
 async function checkSubscriptionStatus() {
     try {
         const subscription = await swRegistration.pushManager.getSubscription();
@@ -657,18 +692,23 @@ window.runComprehensiveTest = async function() {
     }
 }
 
+// 更新健康检查函数
 window.checkServerHealth = async function() {
     try {
         const response = await fetch('/health');
         if (response.ok) {
             const health = await response.json();
-            showNotification(`服务器状态: ${health.status}, VAPID: ${health.vapid_configured}`, 'info');
+            const statusText = health.database_connected ? '正常' : '数据库异常';
+            showNotification(`服务器状态: ${statusText}`, health.database_connected ? 'success' : 'warning');
             console.log('服务器健康状态:', health);
+        } else {
+            showNotification('服务器检查失败', 'error');
         }
     } catch (error) {
         showNotification('服务器检查失败: ' + error.message, 'error');
     }
 };
+
 
 window.testBasicNotification = async function() {
     try {
@@ -751,7 +791,7 @@ async function checkServerStatus() {
     }
 }
 
-// ==================== 主初始化函数 ====================
+// 在初始化时检查数据库状态
 async function initializeApp() {
     try {
         // 启动扩展冲突检测
@@ -760,14 +800,8 @@ async function initializeApp() {
         // 先渲染食谱，确保基本功能可用
         renderRecipes();
         
-        // 检查服务器状态
-        const serverStatus = await checkServerStatus();
-        if (serverStatus) {
-            console.log('服务器VAPID配置:', serverStatus.vapid_configured);
-            if (!serverStatus.vapid_configured) {
-                showNotification('服务器推送配置不完整，请联系管理员', 'warning');
-            }
-        }
+        // 检查数据库状态
+        await checkDatabaseStatus();
         
         if (!checkBrowserSupport()) {
             console.log('浏览器不支持必要功能，仅显示基本界面');
@@ -794,7 +828,6 @@ async function initializeApp() {
         showNotification('应用初始化失败: ' + error.message, 'error');
     }
 }
-
 // ==================== 程序入口点 ====================
 window.addEventListener('load', () => {
     initializeApp();
