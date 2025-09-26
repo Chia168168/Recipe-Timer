@@ -1,6 +1,6 @@
 // ******** 重要 ********
 // 請將這裡替換成您自己生成的 VAPID Public Key
-const VAPID_PUBLIC_KEY = '請貼上您的 VAPID Public Key';
+const VAPID_PUBLIC_KEY = '67K0P7BfyuVhTO_c5Af4Z1OgdLeXzQYgygDUm963wDftppXicrcQeLO11BMOWwGKOeLijASzlJKjotr9odLQzw';
 // *********************
 
 let swRegistration = null;
