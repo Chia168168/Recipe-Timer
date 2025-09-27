@@ -35,21 +35,18 @@ class Timer(db.Model):
     notified = db.Column(db.Boolean, default=False, nullable=False)
     subscription = db.relationship('Subscription', backref=db.backref('timers', lazy=True))
 
-# --- API 端點 ---
+# --- API 端點 (修正後) ---
 @app.route('/')
 def index():
+    # 主頁面路由
     return send_from_directory(app.static_folder, 'index.html')
-
-@app.route('/<path:path>')
-def serve_static(path):
-    return send_from_directory(app.static_folder, path)
 
 @app.route('/subscribe', methods=['POST'])
 def subscribe():
+    # 訂閱 API 路由 (優先匹配)
     data = request.json
     subscription_json = json.dumps(data['subscription'])
     
-    # 檢查是否已存在
     existing_sub = Subscription.query.filter_by(subscription_json=subscription_json).first()
     if existing_sub:
         return jsonify({'status': 'exists', 'id': existing_sub.id}), 200
@@ -61,11 +58,11 @@ def subscribe():
 
 @app.route('/start_timer', methods=['POST'])
 def start_timer():
+    # 計時器 API 路由 (優先匹配)
     data = request.json
     minutes = int(data['minutes'])
     subscription_endpoint = data['subscription']['endpoint']
     
-    # 找到對應的 subscription
     sub_info = Subscription.query.filter(Subscription.subscription_json.contains(subscription_endpoint)).first()
 
     if not sub_info:
@@ -79,6 +76,12 @@ def start_timer():
     db.session.commit()
 
     return jsonify({'status': 'success', 'message': f'Timer set for {minutes} minutes.'})
+
+@app.route('/<path:path>')
+def serve_static(path):
+    # 通用靜態檔案路由 (最後匹配)
+    # 用來處理 /main.js, /sw.js 等檔案請求
+    return send_from_directory(app.static_folder, path)
 
 # --- 背景計時與推播任務 ---
 def send_notification(subscription_info, message):
