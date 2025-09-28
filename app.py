@@ -12,6 +12,10 @@ app = Flask(__name__, static_folder='static')
 # 從環境變數讀取設定 (Render 會提供這些)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_pre_ping": True,
+}
+
 
 VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY')
 VAPID_PUBLIC_KEY = os.environ.get('VAPID_PUBLIC_KEY')
