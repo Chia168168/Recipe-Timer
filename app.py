@@ -80,6 +80,39 @@ def start_timer():
     db.session.commit()
 
     return jsonify({'status': 'success', 'message': f'Timer set for {minutes} minutes.'})
+# ... 在 start_timer 函式後面新增 ...
+
+@app.route('/api/timers', methods=['GET'])
+def get_active_timers():
+    # 這個 API 需要前端提供 subscription endpoint 作為識別
+    endpoint = request.args.get('endpoint')
+    if not endpoint:
+        return jsonify({"error": "Endpoint is required"}), 400
+
+    # 找到對應的 subscription
+    sub_info = Subscription.query.filter(Subscription.subscription_json.contains(endpoint)).first()
+    if not sub_info:
+        # 如果找不到訂閱，可能已被刪除或尚未建立，回傳空列表
+        return jsonify([])
+
+    # 查詢該訂閱底下所有尚未被標記為「已通知」的計時器
+    now = datetime.utcnow()
+    active_timers = Timer.query.filter(
+        Timer.subscription_id == sub_info.id,
+        Timer.notified == False,
+        Timer.expiry_time > now  # 只回傳還在倒數的
+    ).all()
+
+    # 將查詢結果轉換成 JSON 格式回傳給前端
+    timers_data = [
+        {
+            "id": timer.id,
+            "message": timer.message,
+            "expiry_time": timer.expiry_time.isoformat() + 'Z' # 回傳標準 ISO 格式時間
+        } 
+        for timer in active_timers
+    ]
+    return jsonify(timers_data)
 
 @app.route('/<path:path>')
 def serve_static(path):
