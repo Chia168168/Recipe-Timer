@@ -7,7 +7,6 @@ let swRegistration = null;
 let activeTimersIntervals = {}; // 用來存放計時器的 interval ID
 
 // --- Helper Functions ---
-// 將 Base64 字串轉換為 Uint8Array
 function urlBase64ToUint8Array(base64String) {
     const padding = '='.repeat((4 - base64String.length % 4) % 4);
     const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -18,8 +17,6 @@ function urlBase64ToUint8Array(base64String) {
     }
     return outputArray;
 }
-
-// 顯示通知
 function showNotification(message, type = 'info') {
     const container = document.getElementById('notificationContainer');
     const el = document.createElement('div');
@@ -39,7 +36,6 @@ function renderActiveTimers(timers) {
     const container = document.getElementById('active-timers-list');
     const containerWrapper = document.getElementById('active-timers-container');
     
-    // 清理舊的計時器 interval，避免記憶體洩漏
     Object.values(activeTimersIntervals).forEach(clearInterval);
     activeTimersIntervals = {};
     container.innerHTML = '';
@@ -78,13 +74,21 @@ function renderActiveTimers(timers) {
                     <span style="text-decoration: line-through; opacity: 0.6;">${timer.message}</span>
                     <strong style="float:right; color: var(--gray);">已完成</strong>
                 `;
-                // 3秒後移除，讓畫面保持整潔
-                setTimeout(() => timerEl.remove(), 3000);
+                setTimeout(() => {
+                    // 淡出效果
+                    timerEl.style.transition = 'opacity 0.5s ease';
+                    timerEl.style.opacity = '0';
+                    setTimeout(() => timerEl.remove(), 500);
+                }, 3000);
             }
         };
 
-        updateCountdown(); // 立即執行一次
+        updateCountdown();
         activeTimersIntervals[timer.id] = setInterval(updateCountdown, 1000);
+        
+        // ******** 這是最關鍵的修正 ********
+        container.appendChild(timerEl);
+        // *******************************
     });
 }
 
@@ -108,7 +112,6 @@ async function fetchActiveTimers() {
 
 
 // --- Push Notification Functions ---
-// 訂閱推播通知
 async function subscribeUser() {
     try {
         const applicationServerKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
@@ -116,35 +119,26 @@ async function subscribeUser() {
             userVisibleOnly: true,
             applicationServerKey: applicationServerKey
         });
-
-        console.log('User is subscribed.');
-
         await fetch('/subscribe', {
             method: 'POST',
             body: JSON.stringify({ subscription }),
-            headers: {
-                'Content-Type': 'application/json'
-            }
+            headers: { 'Content-Type': 'application/json' }
         });
-
         localStorage.setItem('pushSubscribed', 'true');
         document.getElementById('enableNotificationsBtn').style.display = 'none';
         showNotification('已成功啟用推播通知！', 'success');
-
+        fetchActiveTimers(); // 訂閱成功後立即抓取一次
     } catch (err) {
         console.error('Failed to subscribe the user: ', err);
         showNotification('啟用推播通知失敗', 'error');
     }
 }
-
-// 註冊 Service Worker
 async function registerServiceWorker() {
     if (!('serviceWorker' in navigator && 'PushManager' in window)) {
         console.warn('Push messaging is not supported');
         showNotification('您的瀏覽器不支援推播通知', 'error');
         return;
     }
-
     try {
         swRegistration = await navigator.serviceWorker.register('/sw.js');
         console.log('Service Worker is registered', swRegistration);
@@ -178,34 +172,22 @@ async function handleTimerClick(minutes, recipeName) {
     try {
         const subscription = await swRegistration.pushManager.getSubscription();
         if (!subscription) {
-            showNotification('找不到通知訂閱，請重新啟用', 'error');
-            localStorage.setItem('pushSubscribed', 'false');
-            initializeUI();
+            showNotification('找不到通知訂閱，請重新整理並啟用', 'error');
             return;
         }
-
-        await fetch('/start_timer', {
-            method: 'POST',
-            body: JSON.stringify({
-                minutes: minutes,
-                message: `食譜「${recipeName}」的 ${minutes} 分鐘計時已完成！`,
-                subscription: subscription
-            }),
-            headers: { 'Content-Type': 'application/json' }
-        });
 
         const response = await fetch('/start_timer', {
             method: 'POST',
             body: JSON.stringify({
                 minutes: minutes,
-                message: `食譜「${recipeName}」的 ${minutes} 分鐘計時已完成！`,
-                subscription: await swRegistration.pushManager.getSubscription()
+                message: `「${recipeName}」計時完成！`,
+                subscription: subscription
             }),
             headers: { 'Content-Type': 'application/json' }
         });
         if (response.ok) {
             showNotification(`已在雲端設定 ${minutes} 分鐘計時器！`, 'success');
-            fetchActiveTimers(); // <<<<<< 新增：立即刷新計時器列表
+            fetchActiveTimers(); // 立即刷新計時器列表
         } else {
             throw new Error('Server responded with an error');
         }
@@ -215,48 +197,33 @@ async function handleTimerClick(minutes, recipeName) {
     }
 }
 
-// 渲染範例食譜
 function renderRecipes() {
     const recipeList = [
         { title: '基礎麵糰發酵', steps: [{ text: '第一次發酵 60 分鐘', time: 60 }, { text: '第二次發酵 30 分鐘', time: 30 }] },
         { title: '烤雞', steps: [{ text: '醃漬 120 分鐘', time: 120 }, { text: '烘烤 45 分鐘', time: 45 }] },
         { title: '測試用', steps: [{ text: '1 分鐘快速測試', time: 1 }] }
     ];
-
     const container = document.getElementById('recipes-list');
     container.innerHTML = '';
-
     recipeList.forEach(recipe => {
         let stepsHtml = '';
         recipe.steps.forEach(step => {
-            stepsHtml += `
-                <div style="display:flex; justify-content:space-between; align-items:center; padding: 8px 0;">
-                    <span>${step.text}</span>
-                    <button class="btn btn-info btn-sm" onclick="handleTimerClick(${step.time}, '${recipe.title}')">
-                        <i class="fas fa-hourglass-start"></i> 啟動 ${step.time} 分鐘計時
-                    </button>
-                </div>
-            `;
+            stepsHtml += `<div style="display:flex; justify-content:space-between; align-items:center; padding: 8px 0;"><span>${step.text}</span><button class="btn btn-info btn-sm" onclick="handleTimerClick(${step.time}, '${recipe.title}')"><i class="fas fa-hourglass-start"></i> 啟動 ${step.time} 分鐘計時</button></div>`;
         });
-
         const card = document.createElement('div');
         card.className = 'card';
-        card.innerHTML = `
-            <strong style="color:var(--primary); font-size:1.5rem">${recipe.title}</strong>
-            <div style="margin-top:12px;">${stepsHtml}</div>
-        `;
+        card.innerHTML = `<strong style="color:var(--primary); font-size:1.5rem">${recipe.title}</strong><div style="margin-top:12px;">${stepsHtml}</div>`;
         container.appendChild(card);
     });
 }
-
 
 // 程式進入點
 window.addEventListener('load', () => {
     registerServiceWorker();
     renderRecipes();
 
-    // 每 5 秒鐘輪詢一次伺服器，更新計時器狀態
-    setInterval(fetchActiveTimers, 5000);
+    // 每 10 秒鐘輪詢一次伺服器，更新計時器狀態
+    setInterval(fetchActiveTimers, 10000);
 
     // 當使用者切換回這個分頁時，也立即更新一次
     document.addEventListener('visibilitychange', () => {
@@ -265,4 +232,3 @@ window.addEventListener('load', () => {
         }
     });
 });
-
