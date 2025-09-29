@@ -127,9 +127,25 @@ def serve_static(path):
     return send_from_directory(app.static_folder, path)
 
 def send_notification(subscription_info, message):
-    # ... 函式內容不變 ...
-    pass # Placeholder for brevity
-
+    try:
+        webpush(
+            subscription_info=json.loads(subscription_info),
+            data=message,
+            vapid_private_key=VAPID_PRIVATE_KEY,
+            vapid_claims=VAPID_CLAIMS.copy()
+        )
+        print("Notification sent successfully.")
+    except WebPushException as ex:
+        print(f"WebPushException: {ex}")
+        if ex.response and ex.response.status_code == 410:
+            print("Subscription is gone. Deleting...")
+            # 如果訂閱已失效 (410 Gone)，從資料庫刪除
+            sub_to_delete = Subscription.query.filter_by(subscription_json=json.dumps(subscription_info)).first()
+            if sub_to_delete:
+                db.session.delete(sub_to_delete)
+                db.session.commit()
+        else:
+            print("An error occurred when sending notification.")
 def check_timers():
     with app.app_context():
         now = datetime.utcnow()
