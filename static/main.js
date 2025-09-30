@@ -79,7 +79,7 @@ function renderApp() {
             const isCompleted = timer && timer.status === 'completed';
 
             const timeOptions = [1, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120];
-            const optionsHtml = timeOptions.map(t => `<option value="${t}" ${t === 10 ? 'selected' : ''}>${t} 分鐘</option>`).join('');
+            const optionsHtml = timeOptions.map(t => `<option value="${t}" ${t === 1 ? 'selected' : ''}>${t} 分鐘</option>`).join('');
 
             let statusHtml = '<span style="color:var(--gray);">-</span>';
             if (isRunning) {
