@@ -165,7 +165,7 @@ async function handleStartTimer(clientId) {
 
     try {
         const subscription = await swRegistration.pushManager.getSubscription();
-        if (!subscription) { throw new Error('Subscription not found'); }
+        if (!subscription) { throw new Error('找不到通知訂閱資訊，請嘗試重新整理頁面'); }
 
         const response = await fetch('/start_timer', {
             method: 'POST',
@@ -177,13 +177,23 @@ async function handleStartTimer(clientId) {
             }),
             headers: { 'Content-Type': 'application/json' }
         });
+        
+        // --- 新增的錯誤處理邏輯 ---
         if (response.ok) {
             showNotification(`已為「${stepInfo.name}」設定 ${selectedMinutes} 分鐘計時！`, 'success');
             fetchActiveTimers(); // 立即刷新狀態
-        } else { throw new Error('Server responded with an error'); }
+        } else {
+            // 如果伺服器回傳錯誤，嘗試讀取 JSON 內容中的錯誤訊息
+            const errorData = await response.json().catch(() => null); // 如果回傳的不是JSON，避免解析錯誤
+            const errorMessage = errorData ? errorData.message : `伺服器回應錯誤 (狀態碼: ${response.status})`;
+            throw new Error(errorMessage);
+        }
+        // --------------------------
+
     } catch (err) {
         console.error('Failed to start timer:', err);
-        showNotification('設定計時器失敗', 'error');
+        // 現在會顯示更詳細的錯誤
+        showNotification(`設定計時器失敗: ${err.message}`, 'error');
     }
 }
 
