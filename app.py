@@ -6,20 +6,31 @@ from flask_sqlalchemy import SQLAlchemy
 from apscheduler.schedulers.background import BackgroundScheduler
 from pywebpush import webpush, WebPushException
 
-# --- 初始化設定 ---
+# ==============================================================================
+# --- 1. 初始化與設定 ---
+# ==============================================================================
 app = Flask(__name__, static_folder='static')
+
+# 從環境變數讀取設定
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {"pool_pre_ping": True}
+# [修正] 增加資料庫連線池設定，解決閒置連線中斷問題
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_pre_ping": True,
+}
 
 VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY')
 VAPID_PUBLIC_KEY = os.environ.get('VAPID_PUBLIC_KEY')
-VAPID_CLAIMS = {"sub": "mailto:your-email@example.com"}
+VAPID_CLAIMS = {
+    "sub": "mailto:your-email@example.com" # 建議改成您自己的 Email
+}
 
 db = SQLAlchemy(app)
 scheduler = BackgroundScheduler(daemon=True)
 
-# --- 資料庫模型 ---
+# ==============================================================================
+# --- 2. 資料庫模型 (Database Models) ---
+# ==============================================================================
 class Subscription(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     subscription_json = db.Column(db.Text, nullable=False, unique=True)
@@ -27,18 +38,26 @@ class Subscription(db.Model):
 class Timer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     subscription_id = db.Column(db.Integer, db.ForeignKey('subscription.id'), nullable=False)
-    # 新增一個 client_id 來對應前端的步驟
     client_id = db.Column(db.String(100), nullable=False) 
     expiry_time = db.Column(db.DateTime, nullable=False)
     message = db.Column(db.String(200), nullable=False)
     notified = db.Column(db.Boolean, default=False, nullable=False)
     subscription = db.relationship('Subscription', backref=db.backref('timers', lazy=True, cascade="all, delete-orphan"))
 
-# --- API 端點 ---
+# ==============================================================================
+# --- 3. API 端點 (Routes) ---
+# ==============================================================================
+
+# --- 前端靜態檔案路由 ---
 @app.route('/')
 def index():
     return send_from_directory(app.static_folder, 'index.html')
 
+@app.route('/<path:path>')
+def serve_static(path):
+    return send_from_directory(app.static_folder, path)
+
+# --- 功能 API 路由 ---
 @app.route('/subscribe', methods=['POST'])
 def subscribe():
     data = request.json
@@ -57,7 +76,6 @@ def start_timer():
     sub_info = Subscription.query.filter(Subscription.subscription_json.contains(sub_endpoint)).first()
     if not sub_info: return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
     
-    # 如果同一個步驟的計時器已存在，先刪除舊的
     existing_timer = Timer.query.filter_by(subscription_id=sub_info.id, client_id=data['client_id']).first()
     if existing_timer:
         db.session.delete(existing_timer)
@@ -74,7 +92,6 @@ def start_timer():
     db.session.commit()
     return jsonify({'status': 'success', 'timer_id': new_timer.id})
 
-# [新功能] 取消單一計時器
 @app.route('/api/timers/cancel', methods=['POST'])
 def cancel_timer():
     data = request.json
@@ -86,19 +103,17 @@ def cancel_timer():
         return jsonify({'status': 'success'})
     return jsonify({'status': 'error', 'message': 'Timer not found'}), 404
 
-# [新功能] 取消所有計時器
 @app.route('/api/timers/cancel_all', methods=['POST'])
 def cancel_all_timers():
     data = request.json
     sub_endpoint = data['subscription']['endpoint']
     sub_info = Subscription.query.filter(Subscription.subscription_json.contains(sub_endpoint)).first()
     if sub_info:
-        Timer.query.filter_by(subscription_id=sub_info.id).delete()
+        Timer.query.filter_by(subscription_id=sub_info.id, notified=False).delete()
         db.session.commit()
         return jsonify({'status': 'success'})
     return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
 
-# [優化] 查詢計時器 API
 @app.route('/api/timers', methods=['GET'])
 def get_timers():
     endpoint = request.args.get('endpoint')
@@ -112,84 +127,64 @@ def get_timers():
     
     timers_data = []
     for timer in timers:
-        status = 'completed' if timer.notified or now > timer.expiry_time else 'running'
-        timers_data.append({
-            "id": timer.id,
-            "client_id": timer.client_id,
-            "expiry_time": timer.expiry_time.isoformat() + 'Z',
-            "status": status
-        })
+        # 只有尚未過期或剛過期但還沒被背景任務標記為 notified 的計時器才需要顯示
+        if not timer.notified:
+            status = 'completed' if now > timer.expiry_time else 'running'
+            timers_data.append({
+                "id": timer.id,
+                "client_id": timer.client_id,
+                "expiry_time": timer.expiry_time.isoformat() + 'Z',
+                "status": status
+            })
     return jsonify(timers_data)
 
-# ... 其他函式和背景任務不變 (除了 check_timers 查詢邏輯微調)
-@app.route('/<path:path>')
-def serve_static(path):
-    return send_from_directory(app.static_folder, path)
-@app.route('/api/timers', methods=['GET'])
-def get_active_timers():
-    # 這個 API 需要前端提供 subscription endpoint 作為識別
-    endpoint = request.args.get('endpoint')
-    if not endpoint:
-        return jsonify({"error": "Endpoint is required"}), 400
-
-    # 找到對應的 subscription
-    sub_info = Subscription.query.filter(Subscription.subscription_json.contains(endpoint)).first()
-    if not sub_info:
-        # 如果找不到訂閱，可能已被刪除或尚未建立，回傳空列表
-        return jsonify([])
-
-    # 查詢該訂閱底下所有尚未被標記為「已通知」的計時器
-    now = datetime.utcnow()
-    active_timers = Timer.query.filter(
-        Timer.subscription_id == sub_info.id,
-        Timer.notified == False,
-        Timer.expiry_time > now  # 只回傳還在倒數的
-    ).all()
-
-    # 將查詢結果轉換成 JSON 格式回傳給前端
-    timers_data = [
-        {
-            "id": timer.id,
-            "message": timer.message,
-            "expiry_time": timer.expiry_time.isoformat() + 'Z' # 回傳標準 ISO 格式時間
-        } 
-        for timer in active_timers
-    ]
-    return jsonify(timers_data)
-
-
-def send_notification(subscription_info, message):
+# ==============================================================================
+# --- 4. 背景任務 (Background Task) ---
+# ==============================================================================
+def send_notification(subscription_json_str, message):
     try:
+        subscription_info = json.loads(subscription_json_str)
         webpush(
-            subscription_info=json.loads(subscription_info),
+            subscription_info=subscription_info,
             data=message,
             vapid_private_key=VAPID_PRIVATE_KEY,
             vapid_claims=VAPID_CLAIMS.copy()
         )
-        print("Notification sent successfully.")
+        print(f"Notification sent successfully for message: {message}")
     except WebPushException as ex:
         print(f"WebPushException: {ex}")
         if ex.response and ex.response.status_code == 410:
-            print("Subscription is gone. Deleting...")
-            # 如果訂閱已失效 (410 Gone)，從資料庫刪除
-            sub_to_delete = Subscription.query.filter_by(subscription_json=json.dumps(subscription_info)).first()
+            print("Subscription is gone or expired. Deleting...")
+            sub_to_delete = Subscription.query.filter_by(subscription_json=subscription_json_str).first()
             if sub_to_delete:
                 db.session.delete(sub_to_delete)
                 db.session.commit()
-        else:
-            print("An error occurred when sending notification.")
+                print("Subscription deleted.")
+
 def check_timers():
     with app.app_context():
         now = datetime.utcnow()
         due_timers = Timer.query.filter(Timer.expiry_time <= now, Timer.notified == False).all()
-        for timer in due_timers:
-            send_notification(json.loads(timer.subscription.subscription_json), timer.message)
-            timer.notified = True
-        db.session.commit()
+        
+        if due_timers:
+            print(f"Found {len(due_timers)} due timers to process.")
+            for timer in due_timers:
+                send_notification(timer.subscription.subscription_json, timer.message)
+                timer.notified = True
+            db.session.commit()
+            print("Finished processing due timers.")
 
-# --- 啟動應用 ---
+# ==============================================================================
+# --- 5. 啟動應用 ---
+# ==============================================================================
 with app.app_context():
     db.create_all()
+
+# 設定排程器每 30 秒執行一次 check_timers 任務
 scheduler.add_job(check_timers, 'interval', seconds=30)
 scheduler.start()
-# The rest of the original file (send_notification, if __name__ == '__main__') remains the same
+
+# Gunicorn 在 Render 上會直接執行 'app' 這個實例，所以這段主要用於本地測試
+if __name__ == '__main__':
+    # use_reloader=False 是為了避免 APScheduler 在本地 debug 模式下執行兩次
+    app.run(debug=True, use_reloader=False)
