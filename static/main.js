@@ -1,33 +1,40 @@
 // --- 設定 ---
 const VAPID_PUBLIC_KEY = 'BE0_aRw-529C4ZGHk90uZsKzAOexmMhAd24OYd182cE3rYMnFWOq__ODXZfVVzMeVPbpSregGuaLH3yDZqtbx-8';
-const POLLING_INTERVAL = 8000; // 每8秒向伺服器查詢一次最新狀態
+const POLLING_INTERVAL = 10000; // 每8秒向伺服器查詢一次最
 
 // --- 全域變數 ---
 let swRegistration = null;
 // 應用程式的統一狀態管理物件
 let appState = {
-    recipes: [ // 靜態食譜資料，每個步驟都有獨一無二的 client_id
+    recipes: [ // 新的食譜結構與預設值
         { 
-            id: 'dough', 
-            title: '基礎麵糰發酵', 
+            id: 'fermentation', 
+            title: '麵團發酵', 
             steps: [
-                { id: 'dough_1', name: '第一次發酵' }, 
-                { id: 'dough_2', name: '第二次發酵' }
+                { id: 'ferm_1', name: '基礎發酵', defaultTime: 60 }, 
+                { id: 'ferm_2', name: '中間發酵(1)', defaultTime: 15 },
+                { id: 'ferm_3', name: '中間發酵(2)', defaultTime: 15 },
+                { id: 'ferm_4', name: '最後發酵', defaultTime: 60 }
             ] 
         },
         { 
-            id: 'chicken', 
-            title: '烤雞', 
+            id: 'mixing', 
+            title: '麵團攪拌', 
             steps: [
-                { id: 'chicken_1', name: '醃漬' }, 
-                { id: 'chicken_2', name: '烘烤' }
+                { id: 'mix_1', name: '擴展階段(慢速)', defaultTime: 1 },
+                { id: 'mix_2', name: '擴展階段(中速)', defaultTime: 3 },
+                { id: 'mix_3', name: '擴展階段(快速)', defaultTime: 6 },
+                { id: 'mix_4', name: '冷藏水合', defaultTime: 30 },
+                { id: 'mix_5', name: '完成階段(慢速)', defaultTime: 1 },
+                { id: 'mix_6', name: '完成階段(中速)', defaultTime: 3 },
+                { id: 'mix_7', name: '完成階段(快速)', defaultTime: 3 },
             ] 
         },
         { 
-            id: 'test', 
-            title: '測試用', 
+            id: 'other', 
+            title: '其他', 
             steps: [
-                { id: 'test_1', name: '1分鐘快速測試' }
+                { id: 'other_1', name: '測試', defaultTime: 1 }
             ] 
         }
     ],
@@ -79,7 +86,7 @@ function renderApp() {
             const isCompleted = timer && timer.status === 'completed';
 
             const timeOptions = [1, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120];
-            const optionsHtml = timeOptions.map(t => `<option value="${t}" ${t === 1 ? 'selected' : ''}>${t} 分鐘</option>`).join('');
+            const optionsHtml = timeOptions.map(t => `<option value="${t}" ${t === step.defaultTime ? 'selected' : ''}>${t} 分鐘</option>`).join('');
 
             let statusHtml = '<span style="color:var(--gray);">-</span>';
             if (isRunning) {
@@ -101,7 +108,6 @@ function renderApp() {
                     }
                 };
                 
-                // 立即更新一次，避免延遲感
                 setTimeout(updateCountdown, 0); 
                 appState.intervals[timer.id] = setInterval(updateCountdown, 1000);
 
@@ -132,7 +138,7 @@ function renderApp() {
         card.appendChild(stepsContainer);
         container.appendChild(card);
     });
-
+    
     document.getElementById('cancelAllBtn').style.display = Object.keys(appState.timers).length > 0 ? 'inline-flex' : 'none';
 }
 
@@ -146,12 +152,11 @@ async function fetchActiveTimers() {
         const response = await fetch(`/api/timers?endpoint=${encodeURIComponent(subscription.endpoint)}`);
         if (response.ok) {
             const timersFromServer = await response.json();
-            // 將伺服器回傳的陣列轉換成以 client_id 為 key 的物件，方便查找
             appState.timers = timersFromServer.reduce((acc, timer) => {
                 acc[timer.client_id] = timer;
                 return acc;
             }, {});
-            renderApp(); // 用最新狀態重新渲染整個畫面
+            renderApp();
         }
     } catch (err) {
         console.error('Failed to fetch active timers:', err);
@@ -165,7 +170,7 @@ async function handleStartTimer(clientId) {
 
     try {
         const subscription = await swRegistration.pushManager.getSubscription();
-        if (!subscription) { throw new Error('找不到通知訂閱資訊，請嘗試重新整理頁面'); }
+        if (!subscription) { throw new Error('Subscription not found'); }
 
         const response = await fetch('/start_timer', {
             method: 'POST',
@@ -177,22 +182,16 @@ async function handleStartTimer(clientId) {
             }),
             headers: { 'Content-Type': 'application/json' }
         });
-        
-        // --- 新增的錯誤處理邏輯 ---
         if (response.ok) {
             showNotification(`已為「${stepInfo.name}」設定 ${selectedMinutes} 分鐘計時！`, 'success');
-            fetchActiveTimers(); // 立即刷新狀態
-        } else {
-            // 如果伺服器回傳錯誤，嘗試讀取 JSON 內容中的錯誤訊息
-            const errorData = await response.json().catch(() => null); // 如果回傳的不是JSON，避免解析錯誤
+            fetchActiveTimers();
+        } else { 
+            const errorData = await response.json().catch(() => null);
             const errorMessage = errorData ? errorData.message : `伺服器回應錯誤 (狀態碼: ${response.status})`;
             throw new Error(errorMessage);
         }
-        // --------------------------
-
     } catch (err) {
         console.error('Failed to start timer:', err);
-        // 現在會顯示更詳細的錯誤
         showNotification(`設定計時器失敗: ${err.message}`, 'error');
     }
 }
@@ -213,7 +212,7 @@ async function handleCancelTimer(timerId) {
 }
 
 async function handleCancelAll() {
-    if (!confirm('確定要取消所有進行中的計時器嗎？')) return;
+    if (!confirm('確定要取消並重置所有計時器嗎？這將會清除所有已完成和進行中的項目。')) return;
     try {
         const subscription = await swRegistration.pushManager.getSubscription();
         if (!subscription) { throw new Error('Subscription not found'); }
@@ -222,7 +221,7 @@ async function handleCancelAll() {
             body: JSON.stringify({ subscription: subscription }),
             headers: { 'Content-Type': 'application/json' }
         });
-        showNotification('所有計時器已取消', 'info');
+        showNotification('所有計時器已重置', 'info');
         fetchActiveTimers();
     } catch(err) {
         console.error('Failed to cancel all timers:', err);
@@ -248,6 +247,7 @@ function initializeUI() {
     document.getElementById('cancelAllBtn').addEventListener('click', handleCancelAll);
 
     if (localStorage.getItem('pushSubscribed') === 'true') {
+        document.getElementById('enableNotificationsBtn').style.display = 'none';
         fetchActiveTimers();
     } else {
         document.getElementById('enableNotificationsBtn').style.display = 'inline-flex';
@@ -255,7 +255,6 @@ function initializeUI() {
 }
 
 async function subscribeUser() {
-    // ... (此函式內容不變，可從舊版複製)
     try {
         const applicationServerKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
         const subscription = await swRegistration.pushManager.subscribe({
@@ -279,8 +278,8 @@ async function subscribeUser() {
 
 // --- 程式進入點 ---
 window.addEventListener('load', () => {
-    registerServiceWorker();
     renderApp(); // 初始渲染一次介面骨架
+    registerServiceWorker();
     
     // 設定輪詢
     setInterval(fetchActiveTimers, POLLING_INTERVAL);
