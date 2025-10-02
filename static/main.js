@@ -27,9 +27,19 @@ let appState = {
                 { id: 'mix_4', name: '冷藏水合', defaultTime: 30 },
                 { id: 'mix_5', name: '完成階段(慢速)', defaultTime: 1 },
                 { id: 'mix_6', name: '完成階段(中速)', defaultTime: 3 },
-                { id: 'mix_7', name: '完成階段(快速)', defaultTime: 3 },
+                { id: 'mix_7', name: '完成階段(快速)', defaultTime: 6 },
             ] 
         },
+        { 
+            id: 'fermentation', 
+            title: '烘烤', 
+            steps: [
+                { id: 'ferm_1', name: '土司', defaultTime: 30 }, 
+                { id: 'ferm_2', name: '小麵包', defaultTime: 18 },
+                { id: 'ferm_3', name: '小餐包', defaultTime: 17 },
+                { id: 'ferm_4', name: '司康', defaultTime: 15 }
+            ] 
+        },        
         { 
             id: 'other', 
             title: '其他', 
@@ -85,7 +95,7 @@ function renderApp() {
             const isRunning = timer && timer.status === 'running';
             const isCompleted = timer && timer.status === 'completed';
 
-            const timeOptions = [1, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120];
+            const timeOptions = [1, 3, 5, 6, 9, 10, 12, 15, 18, 20, 25, 28, 30, 32, 40, 45, 50, 60, 75, 90, 120];
             const optionsHtml = timeOptions.map(t => `<option value="${t}" ${t === step.defaultTime ? 'selected' : ''}>${t} 分鐘</option>`).join('');
 
             let statusHtml = '<span style="color:var(--gray);">-</span>';
